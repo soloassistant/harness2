@@ -291,11 +291,18 @@ def _write_summary(summary_path: Path, res: TaskResult) -> None:
 
     Modes may be written by separate processes, so records accumulate per mode.
     """
-    import fcntl
+    try:
+        import fcntl
+    except ImportError:
+        # Windows 兼容：stdlib 无 fcntl（POSIX 专属模块）。此处收口为“跳过文件锁”——
+        # 本机单进程运行不受影响；跨进程合并互斥只在 POSIX 上成立（os.replace 的原子性保留）。
+        # 不要删：这是 harness2 在 Windows 上唯一必需的兼容点，删了 demo 直接 exception。
+        fcntl = None
 
     lock = summary_path.with_suffix(".lock")
     with open(lock, "w") as lf:
-        fcntl.flock(lf, fcntl.LOCK_EX)
+        if fcntl is not None:
+            fcntl.flock(lf, fcntl.LOCK_EX)
         try:
             merged = res.to_dict()
             if summary_path.is_file():
@@ -325,7 +332,8 @@ def _write_summary(summary_path: Path, res: TaskResult) -> None:
             tmp.write_text(json.dumps(merged, indent=2, default=str))
             os.replace(tmp, summary_path)
         finally:
-            fcntl.flock(lf, fcntl.LOCK_UN)
+            if fcntl is not None:
+                fcntl.flock(lf, fcntl.LOCK_UN)
 
 
 def _resolve_libraries(
